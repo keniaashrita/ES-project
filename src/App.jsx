@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Download } from 'lucide-react';
+import { HardwareProvider } from './hardware/HardwareProvider';
 
 import { calculateRSSI, rssiToDistance } from './algorithms/rssiModel';
 import { AdaptivePLEEstimator } from './algorithms/adaptivePLE';
@@ -53,12 +54,92 @@ export default function App() {
   const [anchorTableData, setAnchorTableData] = useState([]);
   const [telemetryHistory, setTelemetryHistory] = useState([]);
 
+  // ── Hardware Mode ──
+  const [dataSource, setDataSource] = useState('simulation'); // 'simulation' | 'hardware'
+  const [hwStatus, setHwStatus] = useState({
+    gatewayConnected: false,
+    deviceConnected: false,
+    stale: true,
+    lastPosition: null,
+    lastTelemetry: null,
+    messageCount: 0
+  });
+  const hwProviderRef = useRef(null);
+
   const ekfRef = useRef(new AdaptiveEKF(25, 25));
   const imuReckoningRef = useRef(new IMUDeadReckoning({ x: 25, y: 25 }));
   const pleEstimatorRef = useRef(new AdaptivePLEEstimator(2.0));
   const simTimeRef = useRef(0);
   const loRaTimerRef = useRef(0);
   const demoIntervalRef = useRef(null);
+
+  // ── Hardware WebSocket Connection ──
+  useEffect(() => {
+    if (dataSource !== 'hardware') {
+      if (hwProviderRef.current) {
+        hwProviderRef.current.disconnect();
+        hwProviderRef.current = null;
+      }
+      return;
+    }
+
+    const hw = new HardwareProvider('ws://localhost:8765');
+    hwProviderRef.current = hw;
+
+    hw.onTelemetry = (data) => {
+      setHwStatus(hw.getStatus());
+
+      // Feed hardware IMU data into existing algorithms
+      if (data.imu && data.imu.ok) {
+        const imuData = {
+          ax: data.imu.a[0],
+          ay: data.imu.a[1],
+          az: data.imu.a[2],
+          gx: data.imu.g[0],
+          gy: data.imu.g[1],
+          gz: data.imu.g[2]
+        };
+        setImuTelemetry({ ...imuData, heading: 0 });
+        const motion = detectMotionState(imuData);
+        setMotionState(motion);
+        const imuInt = imuReckoningRef.current.integrate(
+          imuData,
+          0.1,
+          motion.isStationary
+        );
+        setImuPosition({ x: imuInt.x, y: imuInt.y });
+        ekfRef.current.predict(imuData, 0.1);
+      }
+
+      // Feed hardware anchor data
+      if (data.position && data.position.valid) {
+        const pos = { x: data.position.x, y: data.position.y };
+        setLoraPosition(pos);
+        setFusedPosition(pos);
+        setPositionError(0); // No ground truth in hardware mode
+      }
+
+      // Update anchor table
+      if (data.anchors) {
+        setAnchorTableData(data.anchors.map(a => ({
+          id: a.id,
+          name: 'Anchor ' + a.id,
+          x: a.id === 'A' ? 2 : 8,
+          y: 0,
+          rssi: a.rssi,
+          estimatedDistance: a.distance || 0,
+          trueDistance: 0
+        })));
+      }
+    };
+
+    hw.onStatus = () => setHwStatus(hw.getStatus());
+    hw.onConnect = () => setHwStatus(hw.getStatus());
+    hw.onDisconnect = () => setHwStatus(hw.getStatus());
+    hw.connect();
+
+    return () => hw.disconnect();
+  }, [dataSource]);
 
   const handleReset = () => {
     simTimeRef.current = 0;
@@ -84,7 +165,7 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (!isRunning) return;
+    if (!isRunning || dataSource === 'hardware') return;
     const dt = 0.1;
     const interval = setInterval(() => {
       simTimeRef.current += dt;
@@ -198,7 +279,7 @@ export default function App() {
     }, 100);
 
     return () => clearInterval(interval);
-  }, [isRunning, trajectoryType, environmentKey, packetLossRate, anchors]);
+  }, [isRunning, trajectoryType, environmentKey, packetLossRate, anchors, dataSource]);
 
   const handleAnchorMove = (id, newX, newY) => {
     setAnchors(prev => prev.map(a => a.id === id ? { ...a, x: newX, y: newY } : a));
@@ -244,6 +325,30 @@ export default function App() {
           </nav>
 
           <div className="flex items-center space-x-2">
+            {/* Data Source Toggle */}
+            <div className="flex items-center space-x-1 bg-charcoal-900 p-0.5 rounded border border-charcoal-700 text-xs font-mono">
+              <button
+                onClick={() => setDataSource('simulation')}
+                className={`px-2.5 py-1 rounded transition ${dataSource === 'simulation' ? 'bg-lavender-600 text-white' : 'text-slate-400'}`}
+              >
+                SIM
+              </button>
+              <button
+                onClick={() => setDataSource('hardware')}
+                className={`px-2.5 py-1 rounded transition ${dataSource === 'hardware' ? 'bg-cyber-green text-white' : 'text-slate-400'}`}
+              >
+                HW
+              </button>
+            </div>
+
+            {dataSource === 'hardware' && (
+              <span className={`text-xs font-mono flex items-center space-x-1 ${hwStatus.deviceConnected ? 'text-cyber-green' : 'text-cyber-rose'}`}>
+                <span className={`w-2 h-2 rounded-full ${hwStatus.deviceConnected ? 'bg-cyber-green animate-pulse' : 'bg-cyber-rose'}`} />
+                <span>{hwStatus.deviceConnected ? 'ESP32' : 'DISCONN'}</span>
+              </span>
+            )}
+
+            {/* Existing CSV/JSON buttons */}
             <button onClick={() => exportToCSV(telemetryHistory)} className="flex items-center space-x-1 px-3 py-1.5 rounded bg-charcoal-800 text-slate-300 border border-charcoal-700 text-xs font-mono hover:bg-charcoal-700">
               <Download className="w-3.5 h-3.5 text-cyber-cyan" /><span>CSV</span>
             </button>
@@ -276,7 +381,11 @@ export default function App() {
 
         {activeTab === 'Dashboard' && (
           <Dashboard
-            simulationStatus={isRunning ? 'RUNNING' : 'PAUSED'}
+            simulationStatus={dataSource === 'hardware'
+              ? (hwStatus.deviceConnected ? 'HARDWARE' : 'HW DISCONN')
+              : (isRunning ? 'RUNNING' : 'PAUSED')}
+            dataSource={dataSource}
+            hwStatus={hwStatus}
             groundTruth={groundTruth} fusedPosition={fusedPosition} imuPosition={imuPosition} loraPosition={loraPosition}
             positionError={positionError} imuError={imuError} loraError={loraError}
             anchorTableData={anchorTableData} imuData={imuTelemetry} pleData={pleData}

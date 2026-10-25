@@ -13,6 +13,8 @@ import SensorCards from './SensorCards';
 
 export default function Dashboard({
   simulationStatus,
+  dataSource,
+  hwStatus,
   groundTruth,
   fusedPosition,
   imuPosition,
@@ -88,6 +90,58 @@ export default function Dashboard({
           <div className="text-[10px] text-slate-400 mt-0.5">R_adapt = {ekfState.rValue}</div>
         </div>
       </div>
+
+      {/* Hardware Status Panel — only visible in hardware mode */}
+      {dataSource === 'hardware' && (
+        <div className="tech-panel p-4 rounded-xl border border-cyber-cyan/30">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-semibold text-white tracking-wide text-sm flex items-center space-x-2">
+              <Radio className="w-4 h-4 text-cyber-cyan" />
+              <span>ESP32 Hardware Status</span>
+            </h3>
+            <span className={`text-xs font-mono px-2 py-0.5 rounded ${
+              hwStatus?.deviceConnected
+                ? 'bg-cyber-green/10 text-cyber-green border border-cyber-green/30'
+                : 'bg-cyber-rose/10 text-cyber-rose border border-cyber-rose/30'
+            }`}>
+              {hwStatus?.deviceConnected ? 'CONNECTED' : 'DISCONNECTED'}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs font-mono">
+            <div className="bg-charcoal-900 p-2.5 rounded border border-charcoal-800">
+              <div className="text-slate-500 text-[10px]">GATEWAY</div>
+              <div className={`font-bold ${hwStatus?.gatewayConnected ? 'text-cyber-green' : 'text-cyber-rose'}`}>
+                {hwStatus?.gatewayConnected ? 'ONLINE' : 'OFFLINE'}
+              </div>
+            </div>
+
+            <div className="bg-charcoal-900 p-2.5 rounded border border-charcoal-800">
+              <div className="text-slate-500 text-[10px]">MESSAGES</div>
+              <div className="font-bold text-white">{hwStatus?.messageCount || 0}</div>
+            </div>
+
+            <div className="bg-charcoal-900 p-2.5 rounded border border-charcoal-800">
+              <div className="text-slate-500 text-[10px]">POSITION</div>
+              <div className={`font-bold ${hwStatus?.lastPosition?.valid ? 'text-cyber-green' : 'text-cyber-amber'}`}>
+                {hwStatus?.lastPosition?.valid ? 'VALID' : 'ESTIMATING'}
+              </div>
+            </div>
+
+            <div className="bg-charcoal-900 p-2.5 rounded border border-charcoal-800">
+              <div className="text-slate-500 text-[10px]">METHOD</div>
+              <div className="font-bold text-cyber-cyan">{hwStatus?.lastPosition?.method || 'N/A'}</div>
+            </div>
+          </div>
+
+          {hwStatus?.lastPosition?.note && (
+            <div className="mt-2 text-[10px] text-cyber-amber font-mono flex items-center space-x-1">
+              <AlertTriangle className="w-3 h-3" />
+              <span>{hwStatus.lastPosition.note}</span>
+            </div>
+          )}
+        </div>
+      )}
 
       {/* Primary Position Card & Comparative Status */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

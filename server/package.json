@@ -1,0 +1,15 @@
+{
+  "name": "esp32-positioning-gateway",
+  "version": "1.0.0",
+  "type": "module",
+  "scripts": {
+    "start": "node index.js",
+    "start:sim": "node index.js --simulate"
+  },
+  "dependencies": {
+    "better-sqlite3": "^13.0.3",
+    "dotenv": "^16.4.0",
+    "serialport": "^12.0.0",
+    "ws": "^8.18.0"
+  }
+}
